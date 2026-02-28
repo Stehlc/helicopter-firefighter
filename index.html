@@ -41,39 +41,38 @@
 <script>
 const W = 15, H = 15;
 const WATER_ZONE = { x: 7, y: 14 };
-const MAX_WATER = 3;
-const FIRE_LIMIT = 5;
-const TICK_MS = 200;
-const FIRE_MS = 2000;
+const SPREAD_MS = 3000;
+const FIRE_LIMIT = 3;
 
 let state;
-let gameInterval = null;
-let fireInterval = null;
+let spreadInterval = null;
+let steamTimeout = null;
 
 function init() {
+  clearInterval(spreadInterval);
+  clearTimeout(steamTimeout);
+  spreadInterval = null;
+  steamTimeout = null;
   state = {
-    heli: { x: 7, y: 7, dx: 0, dy: 0 },
+    heli: { x: 7, y: 7 },
+    hasWater: false,
     fires: new Set(),
+    steam: null,       // { x, y } while steam is showing
     score: 0,
-    water: MAX_WATER,
     started: false,
     gameOver: false
   };
-  clearInterval(gameInterval);
-  clearInterval(fireInterval);
-  gameInterval = null;
-  fireInterval = null;
   render();
   showMsg("Arrow key to start");
 }
 
-function fireKey(x, y) { return x + "," + y; }
+function key(x, y) { return x + "," + y; }
 
 function render() {
-  const { heli, fires, score, water } = state;
-  const waterPips = "\u{1F4A7}".repeat(water) + "\u{1F5A4}".repeat(MAX_WATER - water);
+  const { heli, hasWater, fires, steam, score } = state;
+  const waterIcon = hasWater ? "\u{1F4A7}" : "\u274C";
   document.getElementById("hud").textContent =
-    "Score: " + score + "  |  Water: " + waterPips + "  |  Fires: \u{1F525}" + fires.size;
+    "Score: " + score + "  |  Water: " + waterIcon + "  |  Fires: \u{1F525}" + fires.size;
 
   let rows = [];
   for (let y = 0; y < H; y++) {
@@ -81,7 +80,9 @@ function render() {
     for (let x = 0; x < W; x++) {
       if (x === heli.x && y === heli.y) {
         row += "\u{1F681}";
-      } else if (fires.has(fireKey(x, y))) {
+      } else if (steam && x === steam.x && y === steam.y) {
+        row += "\u{1F4A8}";
+      } else if (fires.has(key(x, y))) {
         row += "\u{1F525}";
       } else if (x === WATER_ZONE.x && y === WATER_ZONE.y) {
         row += "\u{1F4A7}";
@@ -98,53 +99,19 @@ function showMsg(txt) {
   document.getElementById("message").textContent = txt;
 }
 
-function tick() {
-  if (state.gameOver || !state.started) return;
-  const h = state.heli;
-  h.x += h.dx;
-  h.y += h.dy;
-
-  // Wall collision
-  if (h.x < 0 || h.x >= W || h.y < 0 || h.y >= H) {
-    endGame("Wall crash!");
-    return;
-  }
-
-  // Fire extinguish
-  const key = fireKey(h.x, h.y);
-  if (state.fires.has(key) && state.water > 0) {
-    state.fires.delete(key);
-    state.water--;
-    state.score++;
-  }
-
-  // Water refill
-  if (h.x === WATER_ZONE.x && h.y === WATER_ZONE.y) {
-    state.water = MAX_WATER;
-  }
-
-  // Too many fires
-  if (state.fires.size >= FIRE_LIMIT) {
-    endGame("Too many fires!");
-    return;
-  }
-
-  render();
-}
-
 function spawnFire() {
-  if (state.gameOver || !state.started) return;
+  if (state.gameOver) return;
   let attempts = 0;
-  while (attempts < 50) {
+  while (attempts < 100) {
     const x = Math.floor(Math.random() * W);
     const y = Math.floor(Math.random() * H);
-    const key = fireKey(x, y);
+    const k = key(x, y);
     if (
-      !state.fires.has(key) &&
+      !state.fires.has(k) &&
       !(x === state.heli.x && y === state.heli.y) &&
       !(x === WATER_ZONE.x && y === WATER_ZONE.y)
     ) {
-      state.fires.add(key);
+      state.fires.add(k);
       render();
       return;
     }
@@ -152,24 +119,97 @@ function spawnFire() {
   }
 }
 
+function spreadFire() {
+  if (state.gameOver || !state.started) return;
+  const dirs = [[0,-1],[0,1],[-1,0],[1,0]];
+  const newFires = [];
+  for (const k of state.fires) {
+    const [fx, fy] = k.split(",").map(Number);
+    // Shuffle directions for randomness
+    const shuffled = dirs.slice().sort(() => Math.random() - 0.5);
+    for (const [ddx, ddy] of shuffled) {
+      const nx = fx + ddx;
+      const ny = fy + ddy;
+      if (nx < 0 || nx >= W || ny < 0 || ny >= H) continue;
+      const nk = key(nx, ny);
+      if (
+        !state.fires.has(nk) &&
+        !newFires.includes(nk) &&
+        !(nx === state.heli.x && ny === state.heli.y) &&
+        !(nx === WATER_ZONE.x && ny === WATER_ZONE.y)
+      ) {
+        newFires.push(nk);
+        break; // each fire spreads to one cell
+      }
+    }
+  }
+  for (const nk of newFires) {
+    state.fires.add(nk);
+  }
+  if (state.fires.size >= FIRE_LIMIT) {
+    endGame("Fire out of control!");
+    return;
+  }
+  render();
+}
+
+function moveHeli(dx, dy) {
+  if (state.gameOver) return;
+  const h = state.heli;
+  const nx = h.x + dx;
+  const ny = h.y + dy;
+
+  // Walls block movement
+  if (nx < 0 || nx >= W || ny < 0 || ny >= H) return;
+
+  h.x = nx;
+  h.y = ny;
+
+  // Water pickup
+  if (h.x === WATER_ZONE.x && h.y === WATER_ZONE.y && !state.hasWater) {
+    state.hasWater = true;
+  }
+
+  // Fire extinguish
+  if (state.fires.has(key(h.x, h.y)) && state.hasWater) {
+    const steamX = h.x;
+    const steamY = h.y;
+    // Clear all fires
+    state.fires.clear();
+    state.hasWater = false;
+    state.score++;
+    state.steam = { x: steamX, y: steamY };
+    render();
+    // Pause fire spread during steam
+    clearInterval(spreadInterval);
+    steamTimeout = setTimeout(function () {
+      state.steam = null;
+      if (!state.gameOver) {
+        spawnFire();
+        spreadInterval = setInterval(spreadFire, SPREAD_MS);
+      }
+      render();
+    }, 1000);
+    return;
+  }
+
+  render();
+}
+
 function endGame(reason) {
   state.gameOver = true;
-  clearInterval(gameInterval);
-  clearInterval(fireInterval);
-  // Clamp heli back into bounds for final render
-  state.heli.x = Math.max(0, Math.min(W - 1, state.heli.x));
-  state.heli.y = Math.max(0, Math.min(H - 1, state.heli.y));
+  clearInterval(spreadInterval);
+  clearTimeout(steamTimeout);
   render();
   showMsg(reason + " Score: " + state.score + " \u2014 Space to restart");
 }
 
 function startGame(dx, dy) {
   state.started = true;
-  state.heli.dx = dx;
-  state.heli.dy = dy;
   showMsg("");
-  gameInterval = setInterval(tick, TICK_MS);
-  fireInterval = setInterval(spawnFire, FIRE_MS);
+  spawnFire();
+  spreadInterval = setInterval(spreadFire, SPREAD_MS);
+  moveHeli(dx, dy);
 }
 
 document.addEventListener("keydown", function (e) {
@@ -194,8 +234,7 @@ document.addEventListener("keydown", function (e) {
   if (!state.started) {
     startGame(dx, dy);
   } else {
-    state.heli.dx = dx;
-    state.heli.dy = dy;
+    moveHeli(dx, dy);
   }
 });
 
