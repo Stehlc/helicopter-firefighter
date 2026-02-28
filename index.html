@@ -45,15 +45,18 @@ const LAKE_COL = 0;
 const MAX_WATER = 5;
 const FIRE_LIMIT = 10;
 const BASE_SPREAD_MS = 3000;
+const SPAWN_MS = 5000;
 const TICK_MS = 100;
 
 let state;
 let tickInterval = null;
 let spreadInterval = null;
+let spawnInterval = null;
 
 function init() {
   clearInterval(tickInterval);
   clearInterval(spreadInterval);
+  clearInterval(spawnInterval);
   state = {
     heli: { x: 10 },
     water: MAX_WATER,
@@ -242,6 +245,7 @@ function endGame(reason) {
   state.gameOver = true;
   clearInterval(tickInterval);
   clearInterval(spreadInterval);
+  clearInterval(spawnInterval);
   render();
   showMsg(reason + " Score: " + state.score + " \u2014 Space to restart");
 }
@@ -252,6 +256,7 @@ function startGame() {
   spawnFire();
   tickInterval = setInterval(gameTick, TICK_MS);
   spreadInterval = setInterval(spreadFire, getSpreadMs());
+  spawnInterval = setInterval(spawnFire, SPAWN_MS);
 }
 
 document.addEventListener("keydown", function (e) {
