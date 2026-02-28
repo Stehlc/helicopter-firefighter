@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Helicopter Firefighter</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #eee;
+    font-family: monospace;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    flex-direction: column;
+  }
+  #hud {
+    font-size: 20px;
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+  }
+  #board {
+    font-size: 24px;
+    line-height: 1.15;
+    letter-spacing: 2px;
+  }
+  #message {
+    font-size: 18px;
+    margin-top: 12px;
+    height: 24px;
+    color: #ffa;
+  }
+</style>
+</head>
+<body>
+<div id="hud"></div>
+<pre id="board"></pre>
+<div id="message"></div>
+<script>
+const W = 15, H = 15;
+const WATER_ZONE = { x: 7, y: 14 };
+const MAX_WATER = 3;
+const FIRE_LIMIT = 5;
+const TICK_MS = 200;
+const FIRE_MS = 2000;
+
+let state;
+let gameInterval = null;
+let fireInterval = null;
+
+function init() {
+  state = {
+    heli: { x: 7, y: 7, dx: 0, dy: 0 },
+    fires: new Set(),
+    score: 0,
+    water: MAX_WATER,
+    started: false,
+    gameOver: false
+  };
+  clearInterval(gameInterval);
+  clearInterval(fireInterval);
+  gameInterval = null;
+  fireInterval = null;
+  render();
+  showMsg("Arrow key to start");
+}
+
+function fireKey(x, y) { return x + "," + y; }
+
+function render() {
+  const { heli, fires, score, water } = state;
+  const waterPips = "\u{1F4A7}".repeat(water) + "\u{1F5A4}".repeat(MAX_WATER - water);
+  document.getElementById("hud").textContent =
+    "Score: " + score + "  |  Water: " + waterPips + "  |  Fires: \u{1F525}" + fires.size;
+
+  let rows = [];
+  for (let y = 0; y < H; y++) {
+    let row = "";
+    for (let x = 0; x < W; x++) {
+      if (x === heli.x && y === heli.y) {
+        row += "\u{1F681}";
+      } else if (fires.has(fireKey(x, y))) {
+        row += "\u{1F525}";
+      } else if (x === WATER_ZONE.x && y === WATER_ZONE.y) {
+        row += "\u{1F4A7}";
+      } else {
+        row += "\u2B1B";
+      }
+    }
+    rows.push(row);
+  }
+  document.getElementById("board").textContent = rows.join("\n");
+}
+
+function showMsg(txt) {
+  document.getElementById("message").textContent = txt;
+}
+
+function tick() {
+  if (state.gameOver || !state.started) return;
+  const h = state.heli;
+  h.x += h.dx;
+  h.y += h.dy;
+
+  // Wall collision
+  if (h.x < 0 || h.x >= W || h.y < 0 || h.y >= H) {
+    endGame("Wall crash!");
+    return;
+  }
+
+  // Fire extinguish
+  const key = fireKey(h.x, h.y);
+  if (state.fires.has(key) && state.water > 0) {
+    state.fires.delete(key);
+    state.water--;
+    state.score++;
+  }
+
+  // Water refill
+  if (h.x === WATER_ZONE.x && h.y === WATER_ZONE.y) {
+    state.water = MAX_WATER;
+  }
+
+  // Too many fires
+  if (state.fires.size >= FIRE_LIMIT) {
+    endGame("Too many fires!");
+    return;
+  }
+
+  render();
+}
+
+function spawnFire() {
+  if (state.gameOver || !state.started) return;
+  let attempts = 0;
+  while (attempts < 50) {
+    const x = Math.floor(Math.random() * W);
+    const y = Math.floor(Math.random() * H);
+    const key = fireKey(x, y);
+    if (
+      !state.fires.has(key) &&
+      !(x === state.heli.x && y === state.heli.y) &&
+      !(x === WATER_ZONE.x && y === WATER_ZONE.y)
+    ) {
+      state.fires.add(key);
+      render();
+      return;
+    }
+    attempts++;
+  }
+}
+
+function endGame(reason) {
+  state.gameOver = true;
+  clearInterval(gameInterval);
+  clearInterval(fireInterval);
+  // Clamp heli back into bounds for final render
+  state.heli.x = Math.max(0, Math.min(W - 1, state.heli.x));
+  state.heli.y = Math.max(0, Math.min(H - 1, state.heli.y));
+  render();
+  showMsg(reason + " Score: " + state.score + " \u2014 Space to restart");
+}
+
+function startGame(dx, dy) {
+  state.started = true;
+  state.heli.dx = dx;
+  state.heli.dy = dy;
+  showMsg("");
+  gameInterval = setInterval(tick, TICK_MS);
+  fireInterval = setInterval(spawnFire, FIRE_MS);
+}
+
+document.addEventListener("keydown", function (e) {
+  if (state.gameOver) {
+    if (e.code === "Space") {
+      e.preventDefault();
+      init();
+    }
+    return;
+  }
+
+  let dx = 0, dy = 0;
+  switch (e.code) {
+    case "ArrowUp":    dy = -1; break;
+    case "ArrowDown":  dy = 1;  break;
+    case "ArrowLeft":  dx = -1; break;
+    case "ArrowRight": dx = 1;  break;
+    default: return;
+  }
+  e.preventDefault();
+
+  if (!state.started) {
+    startGame(dx, dy);
+  } else {
+    state.heli.dx = dx;
+    state.heli.dy = dy;
+  }
+});
+
+init();
+</script>
+</body>
+</html>
